@@ -75,12 +75,6 @@ Input             |  Animated Output
 ![](picture/2.jpg)  |  ![](picture/2.gif)
 ![](picture/3.jpg)  |  ![](picture/3.gif)
 
-## App
-
-* Do not want to run the code? Try an App [_一刻相册_](https://photo.baidu.com/) downloaded from [here](https://photo.baidu.com/union/youa/home)!
-
-<img src="https://github.com/Huage001/PaintTransformer/blob/main/picture/yike.jpg" width="500px"/>
-
 ## Citation
 
 * If you find ideas or codes useful for your research, please cite:

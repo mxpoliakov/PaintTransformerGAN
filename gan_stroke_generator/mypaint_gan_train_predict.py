@@ -9,29 +9,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from gan_stroke_generator.mypaint_images_data_loader import MyPaintImagesDataLoader
 
-def reconstruction_loss_function(recon_x, x, mask_multiplier):
-    """
-    This is MSE for images but with non-whitespace areas of the image weighted by mask_multiplier.
-    For VAE training, we set this to >1 at the beginning of training for ~10k steps to make sure the VAE does not get
-    stuck at predicting pure whitespace.
-    """
-    if mask_multiplier != 1.0:
-        mask = torch.mean(x, dim=1)
-        stroke_whitespace = torch.eq(mask, torch.ones_like(mask))
-        mask = torch.where(
-            stroke_whitespace,
-            torch.ones_like(mask),
-            torch.ones_like(mask) * mask_multiplier,
-        )
-        mask = mask.view(-1, 1, 64, 64)
-        MSE = torch.sum((recon_x - x) ** 2 * mask, dim=[1, 2, 3])
-    else:
-        mask = None
-        MSE = torch.sum((recon_x - x) ** 2, dim=[1, 2, 3])
-    MSE = torch.mean(MSE)
-    return MSE, mask
-
-
 # custom weights initialization called on netG and netD
 def weights_init(m):
     classname = m.__class__.__name__
@@ -48,7 +25,7 @@ class Discriminator(nn.Module):
         self.dim = dim
 
         self.fc1 = nn.Linear(action_size, dim)
-        self.conv1 = nn.Conv2d(3, dim, 4, stride=2, padding=1)
+        self.conv1 = nn.Conv2d(1, dim, 4, stride=2, padding=1)
         self.conv2 = nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1)
         self.bn2 = nn.BatchNorm2d(dim * 2)
         self.conv3 = nn.Conv2d(dim * 2, dim * 4, 4, stride=2, padding=1)
@@ -89,7 +66,7 @@ class Generator(nn.Module):
         self.bn3 = nn.BatchNorm2d(dim * 4)
         self.deconv3 = nn.ConvTranspose2d(dim * 4, dim * 2, 4, stride=2, padding=1)
         self.bn4 = nn.BatchNorm2d(dim * 2)
-        self.deconv4 = nn.ConvTranspose2d(dim * 2, 3, 4, stride=2, padding=1)
+        self.deconv4 = nn.ConvTranspose2d(dim * 2, 1, 4, stride=2, padding=1)
         self.leaky_relu = nn.LeakyReLU(negative_slope=0.2)
 
     def forward(self, actions):
@@ -110,7 +87,7 @@ class Generator(nn.Module):
         x = F.relu(self.bn3(self.deconv2(x)))
         x = F.relu(self.bn4(self.deconv3(x)))
         x = F.sigmoid(self.deconv4(x))
-        return x.view(-1, 3, 64, 64)
+        return x.view(-1, 1, 64, 64)
 
 
 class GANMyPaintStrokes(nn.Module):
@@ -193,7 +170,7 @@ def calc_gradient_penalty(
     epsilon = (
         epsilon.expand(batch_size, real_data.nelement() // batch_size)
         .contiguous()
-        .view(batch_size, 3, 64, 64)
+        .view(batch_size, 1, 64, 64)
     )
     epsilon = epsilon.to(device)
 
@@ -219,7 +196,6 @@ def train_gan_mypaint_strokes(
     device: torch.device = 'cpu',
     noise_dim: int = 16,
     disc_iters: int = 5,
-    use_reconstruction_loss: bool = True,
     save_every_n_steps: int = 25000,
     log_every_n_steps: int = 2000,
     tensorboard_every_n_steps: int = 100,
@@ -227,14 +203,13 @@ def train_gan_mypaint_strokes(
     save_dir: str = "gan_train_checkpoints",
     save_name: str = "gan_mypaint_strokes",
 ):
-    """Trains GAN Neural Painter. Refer to the paper for details.
+    """Trains GAN for generating MyPaint strokes.
     :param action_size: number of dimensions of action
     :param dim_size: dictates size of network
     :param device: torch.device used in training
     :param data_dir: where the training data is stored
-    :param noise_dim: number of dimensions of noise vector. if 0, neural painter will be deterministic
+    :param noise_dim: number of dimensions of noise vector. if 0, network will be deterministic
     :param disc_iters: number of iterations of discriminator per iteration of generator
-    :param use_reconstruction_loss: use reconstruction loss in addition to adversarial loss during training.
     :param save_every_n_steps: save checkpoint every n steps
     :param log_every_n_steps: print a log every n steps
     :param tensorboard_every_n_steps: log to tensorboard every n steps
@@ -283,25 +258,6 @@ def train_gan_mypaint_strokes(
 
                 generator_loss = generated_score
 
-                if use_reconstruction_loss:
-                    uneven_mult = 10.0 if batch_idx < 100000 * 64 else 1.0  # Do I need this?
-                    if batch_idx < 500000 * 64:
-                        reconstruction_loss_mult = 10.0
-                    elif batch_idx < 550000 * 64:
-                        reconstruction_loss_mult = 1.0
-                    else:
-                        reconstruction_loss_mult = 0.1
-                    reconstruction_loss, _ = reconstruction_loss_function(
-                        generated, strokes, uneven_mult
-                    )
-                    generator_loss += reconstruction_loss_mult * reconstruction_loss
-                    writer.add_scalar(
-                        "reconstruction_loss", reconstruction_loss, batch_idx
-                    )
-                    writer.add_scalar(
-                        "reconstruction_loss_mult", reconstruction_loss_mult, batch_idx
-                    )
-
                 generator_loss.backward()
                 optim_gen.step()
 
@@ -336,8 +292,8 @@ def train_gan_mypaint_strokes(
                 writer.add_scalar("gradient_penalty", gradient_penalty, batch_idx)
 
             if batch_idx % tensorboard_every_n_steps == 0:
-                writer.add_images("img_in", strokes[:3], batch_idx)
-                writer.add_images("img_out", generated[:3], batch_idx)
+                writer.add_images("img_in", strokes, batch_idx)
+                writer.add_images("img_out", generated, batch_idx)
             if batch_idx % log_every_n_steps == 0:
                 print("train batch {}".format(batch_idx))
 

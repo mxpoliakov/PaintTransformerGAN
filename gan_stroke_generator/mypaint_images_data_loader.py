@@ -71,7 +71,7 @@ class MyPaintImagesDataLoader:
         self.brush = brush.Brush(self.brush_info)
         self.H = H
         self.W = W
-        self.num_action = 11
+        self.num_action = 9
         self.num_images = int(10e9)
 
     def _stroke_to(self, x, y, pressure):
@@ -142,6 +142,7 @@ class MyPaintImagesDataLoader:
         end_y,
         control_x,
         control_y,
+        entry_pressure,
         pressure,
         size,
         color_rgb,
@@ -152,7 +153,6 @@ class MyPaintImagesDataLoader:
         end_y = end_y * self.W
         control_x = control_x * self.H
         control_y = control_y * self.W
-        entry_pressure = 0.5
 
         self.brush.brushinfo.set_color_rgb(color_rgb)
         self.brush.brushinfo.set_base_value("radius_logarithmic", size)
@@ -181,6 +181,7 @@ class MyPaintImagesDataLoader:
         end_y,
         control_x,
         control_y,
+        entry_pressure,
         pressure,
         size,
         color_rgb,
@@ -192,6 +193,7 @@ class MyPaintImagesDataLoader:
             end_y,
             control_x,
             control_y,
+            entry_pressure,
             pressure,
             size,
             color_rgb,
@@ -200,7 +202,6 @@ class MyPaintImagesDataLoader:
         rect = [0, 0, self.H, self.W]
         scanline_strips = surface.scanline_strips_iter(self.surface, rect, single_tile_pattern=True)
         img = next(scanline_strips)
-        img = np.array(Image.fromarray(img).convert('RGB'))
         self.surface.clear()
         self.surface.end_atomic()
         self.surface.begin_atomic()
@@ -224,15 +225,17 @@ class MyPaintImagesDataLoader:
                 control_x=action[4],
                 control_y=action[5],
                 pressure=action[6],
-                size=action[7],
-                color_rgb=(action[8], action[9], action[10]),
+                entry_pressure=action[7],
+                size=action[8],
+                color_rgb=[1, 1, 1],
             )
+            img = Image.fromarray(img).convert('L')
             # We need to create batch of size 1
+            img = np.expand_dims(img, axis=0)
+            # We need to create a channel for img
             img = np.expand_dims(img, axis=0)
             action = np.expand_dims(action, axis=0)
             yield {
-                "stroke": torch.from_numpy(
-                    img.transpose((0, 3, 1, 2)).astype(float) / 255.0
-                ),
+                "stroke": torch.from_numpy(img.astype(float) / 255.0),
                 "action": torch.from_numpy(action),
             }

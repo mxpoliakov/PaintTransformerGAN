@@ -26,7 +26,6 @@ def tensor2im(input_image, imtype=np.uint8):
         image_numpy = input_image * 255.
     return image_numpy.astype(imtype)
 
-
 def diagnose_network(net, name='network'):
     """Calculate and print the mean of average absolute(gradients)
 

@@ -18,7 +18,7 @@ ICCV 2021 (Oral)
 
 * Linux or macOS
 * Python 3
-* PyTorch 1.7+ and other dependencies (torchvision, visdom, dominate, and other common python libs)
+* PyTorch 1.7+ and other dependencies (torchvision and other common python libs)
 
 ## Getting Started
 
@@ -50,10 +50,10 @@ ICCV 2021 (Oral)
 
 * Train:
 
-  * Before training, start *visdom* server:
+  * Before training, start tensorboard:
 
     ```shell
-    python -m visdom.server
+    tensorboard serve
     ```
 
   * Then, simply run: 
@@ -63,7 +63,7 @@ ICCV 2021 (Oral)
     bash train.sh
     ```
 
-  * You can monitor training status at http://localhost:8097/ and models would be saved at checkpoints/painter folder.
+  * You can monitor training status at http://localhost:6006/ and models would be saved at checkpoints/painter folder.
 
 * You may feel free to try other training options written in train.sh. 
 

@@ -58,8 +58,6 @@ class BaseOptions:
                                  'scale_width_and_crop | none]')
         parser.add_argument('--no_flip', action='store_true',
                             help='if specified, do not flip the images for data augmentation')
-        parser.add_argument('--display_winsize', type=int, default=256,
-                            help='display window size for both visdom and HTML')
         # additional parameters
         parser.add_argument('--epoch', type=str, default='latest',
                             help='which epoch to load? set to latest to use latest cached model')

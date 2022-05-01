@@ -1,6 +1,6 @@
 python train.py \
 --name painter \
---gpu_ids 0 \
+--gpu_ids -1 \
 --model painter \
 --dataset_mode null \
 --batch_size 64 \

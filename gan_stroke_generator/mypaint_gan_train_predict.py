@@ -193,7 +193,7 @@ def calc_gradient_penalty(
 
 def train_gan_mypaint_strokes(
     dim_size: int = 16,
-    device: torch.device = 'cpu',
+    device: torch.device = "cpu",
     noise_dim: int = 16,
     disc_iters: int = 5,
     save_every_n_steps: int = 25000,
@@ -240,74 +240,74 @@ def train_gan_mypaint_strokes(
     )
     # Initialize tensorboard a.k.a. greatest thing since sliced bread
     writer = SummaryWriter(tensorboard_log_dir)
-    for _ in range(100):
-        for batch_idx, batch in enumerate(loader):
-            batch_idx += batch_idx_offset
 
-            strokes = batch["stroke"].float().to(device)
-            actions = batch["action"].float().to(device)
+    for batch_idx, batch in enumerate(loader):
+        batch_idx += batch_idx_offset
 
-            if (batch_idx + 1) % (disc_iters + 1) == 0:  
-                # Generator step every disc_iters + 1 steps
-                for p in discriminator.parameters():
-                    p.requires_grad = False  # to avoid computation (i copied this code, but this makes no sense i think?)
-                optim_gen.zero_grad()
+        strokes = batch["stroke"].float().to(device)
+        actions = batch["action"].float().to(device)
 
-                generated = generator(actions)
-                generated_score = torch.mean(discriminator(generated, actions))
+        if (batch_idx + 1) % (disc_iters + 1) == 0:
+            # Generator step every disc_iters + 1 steps
+            for p in discriminator.parameters():
+                p.requires_grad = False  # to avoid computation (i copied this code, but this makes no sense i think?)
+            optim_gen.zero_grad()
 
-                generator_loss = generated_score
+            generated = generator(actions)
+            generated_score = torch.mean(discriminator(generated, actions))
 
-                generator_loss.backward()
-                optim_gen.step()
+            generator_loss = generated_score
 
-                writer.add_scalar("generator_loss", generator_loss, batch_idx)
+            generator_loss.backward()
+            optim_gen.step()
 
-            else:  # Discriminator steps for everything else
-                for p in discriminator.parameters():
-                    p.requires_grad = True  # they are set to False in generator update
-                optim_disc.zero_grad()
+            writer.add_scalar("generator_loss", generator_loss, batch_idx)
 
-                real_score = torch.mean(discriminator(strokes, actions))
+        else:  # Discriminator steps for everything else
+            for p in discriminator.parameters():
+                p.requires_grad = True  # they are set to False in generator update
+            optim_disc.zero_grad()
 
-                generated = generator(actions)
-                generated_score = torch.mean(discriminator(generated, actions))
+            real_score = torch.mean(discriminator(strokes, actions))
 
-                gradient_penalty = calc_gradient_penalty(
-                    discriminator,
-                    strokes.detach(),
-                    generated.detach(),
-                    actions,
-                    device,
-                    10.0,
-                )
+            generated = generator(actions)
+            generated_score = torch.mean(discriminator(generated, actions))
 
-                disc_loss = real_score - generated_score + gradient_penalty
-                disc_loss.backward()
-                optim_disc.step()
+            gradient_penalty = calc_gradient_penalty(
+                discriminator,
+                strokes.detach(),
+                generated.detach(),
+                actions,
+                device,
+                10.0,
+            )
 
-                writer.add_scalar("discriminator_loss", disc_loss, batch_idx)
-                writer.add_scalar("real_score", real_score, batch_idx)
-                writer.add_scalar("generated_score", generated_score, batch_idx)
-                writer.add_scalar("gradient_penalty", gradient_penalty, batch_idx)
+            disc_loss = real_score - generated_score + gradient_penalty
+            disc_loss.backward()
+            optim_disc.step()
 
-            if batch_idx % tensorboard_every_n_steps == 0:
-                writer.add_images("img_in", strokes, batch_idx)
-                writer.add_images("img_out", generated, batch_idx)
-            if batch_idx % log_every_n_steps == 0:
-                print("train batch {}".format(batch_idx))
+            writer.add_scalar("discriminator_loss", disc_loss, batch_idx)
+            writer.add_scalar("real_score", real_score, batch_idx)
+            writer.add_scalar("generated_score", generated_score, batch_idx)
+            writer.add_scalar("gradient_penalty", gradient_penalty, batch_idx)
 
-            if batch_idx % save_every_n_steps == 0:
-                save_train_checkpoint(
-                    save_dir,
-                    save_name,
-                    batch_idx,
-                    discriminator,
-                    generator,
-                    optim_disc,
-                    optim_gen,
-                )
-        batch_idx_offset = batch_idx + 1
+        if batch_idx % tensorboard_every_n_steps == 0:
+            writer.add_images("img_in", strokes, batch_idx)
+            writer.add_images("img_out", generated, batch_idx)
+        if batch_idx % log_every_n_steps == 0:
+            print("train batch {}".format(batch_idx))
+
+        if batch_idx % save_every_n_steps == 0:
+            save_train_checkpoint(
+                save_dir,
+                save_name,
+                batch_idx,
+                discriminator,
+                generator,
+                optim_disc,
+                optim_gen,
+            )
+    batch_idx_offset = batch_idx + 1
 
 
 if __name__ == "__main__":

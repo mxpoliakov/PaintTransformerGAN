@@ -139,5 +139,5 @@ class Painter(nn.Module):
         img_temp = img.unsqueeze(1).contiguous().repeat(1, s, 1, 1, 1).view(b * s, 3, H, W).contiguous()
         color = nn.functional.grid_sample(img_temp, 2 * grid - 1, align_corners=False).view(b, s, 3).contiguous()
         decision = self.linear_decider(hidden_state)
-        return torch.cat([param, color, color, torch.rand(b, s, 1, device=img.device)], dim=-1), decision
+        return torch.cat([param, color], dim=-1), decision
 

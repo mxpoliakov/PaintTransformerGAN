@@ -4,8 +4,8 @@ from .base_model import BaseModel
 from . import networks
 from util import morphology
 from scipy.optimize import linear_sum_assignment
-from PIL import Image
-
+import torchvision.transforms as transforms
+from gan_stroke_generator.mypaint_gan_train_predict import GANMyPaintStrokes
 
 class PainterModel(BaseModel):
 
@@ -28,22 +28,13 @@ class PainterModel(BaseModel):
         self.loss_names = ['pixel', 'gt', 'w', 'decision']
         self.visual_names = ['old', 'render', 'rec']
         self.model_names = ['g']
-        self.d = 12  # xc, yc, w, h, theta, R0, G0, B0, R2, G2, B2, A
-        self.d_shape = 5
+        self.d = 12
+        self.d_shape = 9
 
-        def read_img(img_path, img_type='RGB'):
-            img = Image.open(img_path).convert(img_type)
-            img = np.array(img)
-            if img.ndim == 2:
-                img = np.expand_dims(img, axis=-1)
-            img = img.transpose((2, 0, 1))
-            img = torch.from_numpy(img).unsqueeze(0).float() / 255.
-            return img
-
-        brush_large_vertical = read_img('brush/brush_large_vertical.png', 'L').to(self.device)
-        brush_large_horizontal = read_img('brush/brush_large_horizontal.png', 'L').to(self.device)
-        self.meta_brushes = torch.cat(
-            [brush_large_vertical, brush_large_horizontal], dim=0)
+        self.gan_strokes = GANMyPaintStrokes(action_size=self.d_shape)
+        self.gan_strokes.load_from_train_checkpoint(
+            '../gan_stroke_generator/gan_train_checkpoints/gan_mypaint_strokes_latest.tar'
+        )
         net_g = networks.Painter(self.d_shape, opt.used_strokes, opt.ngf,
                                  n_enc_layers=opt.num_blocks, n_dec_layers=opt.num_blocks)
         self.net_g = networks.init_net(net_g, opt.init_type, opt.init_gain, self.gpu_ids)
@@ -61,50 +52,27 @@ class PainterModel(BaseModel):
         self.loss_decision = torch.tensor(0., device=self.device)
         self.criterion_pixel = torch.nn.L1Loss().to(self.device)
         self.criterion_decision = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor(opt.lambda_recall)).to(self.device)
-        if self.isTrain:
+        if self.is_train:
             self.optimizer = torch.optim.Adam(self.net_g.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizers.append(self.optimizer)
 
     def param2stroke(self, param, H, W):
-        # param: b, 12
-        b = param.shape[0]
-        param_list = torch.split(param, 1, dim=1)
-        x0, y0, w, h, theta = [item.squeeze(-1) for item in param_list[:5]]
-        R0, G0, B0, R2, G2, B2, _ = param_list[5:]
-        sin_theta = torch.sin(torch.acos(torch.tensor(-1., device=param.device)) * theta)
-        cos_theta = torch.cos(torch.acos(torch.tensor(-1., device=param.device)) * theta)
-        index = torch.full((b,), -1, device=param.device)
-        index[h > w] = 0
-        index[h <= w] = 1
-        brush = self.meta_brushes[index.long()]
+        param_list = torch.split(param, [self.d_shape] + [1] * (self.d - self.d_shape), dim=1)
+        actions, R, G, B, = param_list
+        brush = self.gan_strokes.forward(actions)
+        brush = transforms.Resize((H, W))(brush)
         alphas = torch.cat([brush, brush, brush], dim=1)
-        alphas = (alphas > 0).float()
-        t = torch.arange(0, brush.shape[2], device=param.device).unsqueeze(0) / brush.shape[2]
-        color_map = torch.stack([R0 * (1 - t) + R2 * t, G0 * (1 - t) + G2 * t, B0 * (1 - t) + B2 * t], dim=1)
+        # Clear noise from alpha
+        quantiles = torch.quantile(alphas.reshape(alphas.shape[0], -1), 0.8, dim=1, keepdim=True)
+        alphas = (alphas > quantiles[:, None, None]).float()
+        color_map = torch.stack([R, G, B], dim=1)
         color_map = color_map.unsqueeze(-1).repeat(1, 1, 1, brush.shape[3])
         brush = brush * color_map
-
-        warp_00 = cos_theta / w
-        warp_01 = sin_theta * H / (W * w)
-        warp_02 = (1 - 2 * x0) * cos_theta / w + (1 - 2 * y0) * sin_theta * H / (W * w)
-        warp_10 = -sin_theta * W / (H * h)
-        warp_11 = cos_theta / h
-        warp_12 = (1 - 2 * y0) * cos_theta / h - (1 - 2 * x0) * sin_theta * W / (H * h)
-        warp_0 = torch.stack([warp_00, warp_01, warp_02], dim=1)
-        warp_1 = torch.stack([warp_10, warp_11, warp_12], dim=1)
-        warp = torch.stack([warp_0, warp_1], dim=1)
-        grid = torch.nn.functional.affine_grid(warp, torch.Size((b, 3, H, W)), align_corners=False)
-        brush = torch.nn.functional.grid_sample(brush, grid, align_corners=False)
-        alphas = torch.nn.functional.grid_sample(alphas, grid, align_corners=False)
-
         return brush, alphas
 
-    def set_input(self, input_dict):
-        self.image_paths = input_dict['A_paths']
+    def set_input(self):
         with torch.no_grad():
             old_param = torch.rand(self.opt.batch_size // 4, self.opt.used_strokes, self.d, device=self.device)
-            old_param[:, :, :4] = old_param[:, :, :4] * 0.5 + 0.2
-            old_param[:, :, -4:-1] = old_param[:, :, -7:-4]
             old_param = old_param.view(-1, self.d).contiguous()
             foregrounds, alphas = self.param2stroke(old_param, self.patch_size * 2, self.patch_size * 2)
             foregrounds = morphology.Dilation2d(m=1)(foregrounds)
@@ -121,10 +89,7 @@ class PainterModel(BaseModel):
             old = old.view(self.opt.batch_size // 4, 3, 2, self.patch_size, 2, self.patch_size).contiguous()
             old = old.permute(0, 2, 4, 1, 3, 5).contiguous()
             self.old = old.view(self.opt.batch_size, 3, self.patch_size, self.patch_size).contiguous()
-
             gt_param = torch.rand(self.opt.batch_size, self.opt.used_strokes, self.d, device=self.device)
-            gt_param[:, :, :4] = gt_param[:, :, :4] * 0.5 + 0.2
-            gt_param[:, :, -4:-1] = gt_param[:, :, -7:-4]
             self.gt_param = gt_param[:, :, :self.d_shape]
             gt_param = gt_param.view(-1, self.d).contiguous()
             foregrounds, alphas = self.param2stroke(gt_param, self.patch_size, self.patch_size)
@@ -188,24 +153,68 @@ class PainterModel(BaseModel):
         sigma_1 = torch.stack([sigma_01, sigma_11], dim=-1)
         sigma = torch.stack([sigma_0, sigma_1], dim=-2)
         return sigma
+    
+    @staticmethod
+    def rotate(coords, alpha):
+        x, y = torch.split(coords, 1, dim=-1)
+        rotated_x = x * torch.cos(alpha) - y * torch.sin(alpha)
+        rotated_y = x * torch.sin(alpha) + y * torch.cos(alpha)
+        return torch.stack([rotated_x, rotated_y], dim=-1).squeeze()
+
+    def get_rotated_bounding_box(self, param):
+        start, end, control, pressure, entry_pressure, size = torch.split(
+            param, (2, 2, 2, 1, 1, 1), dim=-1
+        )
+        start = torch.clamp_max(start + entry_pressure * 0.15, 1)
+        end = torch.clamp_max(end + pressure * 0.15, 1)
+        control = torch.clamp_min(control - size * 0.15, 0)
+        translation = torch.clone(start)
+        end_x, end_y = torch.split(start, 1, dim=-1)
+        alpha = torch.atan2(end_y, end_x)
+        start = self.rotate(start - translation, -alpha)
+        end = self.rotate(end - translation, -alpha)
+        control = self.rotate(control - translation, -alpha)
+        t = (start - control) / (-2 * control + start + end)
+        solution = (1 - t) ** 2 * start + 2 * t * (1 - t) * control + t ** 2 * end
+        max = torch.maximum(solution, torch.maximum(start, end))
+        min = torch.minimum(solution, torch.minimum(start, end))
+        max_x, max_y = torch.split(max, 1, dim=-1)
+        min_x, min_y = torch.split(min, 1, dim=-1)
+        bbox_max = self.rotate(max, alpha) + translation
+        bbox_min = self.rotate(min, alpha) + translation
+        bbox_max_adj = self.rotate(torch.stack([max_x, min_y], dim=-1).squeeze(), alpha) + translation
+        bbox_min_adj = self.rotate(torch.stack([min_x, max_y], dim=-1).squeeze(), alpha) + translation
+        x_center = (bbox_max[..., 0] + bbox_min[..., 0]) / 2
+        y_center = (bbox_min_adj[..., 1] + bbox_min[..., 1]) / 2
+        w = ((bbox_min_adj[..., 1] - bbox_max[..., 1]) ** 2 + (bbox_min_adj[..., 0] - bbox_max[..., 0]) ** 2) ** 0.5
+        h = ((bbox_max[..., 1] - bbox_max_adj[..., 1]) ** 2 + (bbox_max[..., 0] - bbox_max_adj[..., 0]) ** 2) ** 0.5
+        angle = torch.atan2(bbox_max_adj[..., 1] - bbox_max[..., 1], bbox_max_adj[..., 0] - bbox_max[..., 0])
+        rotated_bbox = torch.stack(
+            [torch.clamp(x_center, 0, 1), torch.clamp(y_center, 0, 1), torch.clamp(w, 0, 1), torch.clamp(h, 0, 1), angle]
+        )
+        return rotated_bbox.T if rotated_bbox.dim() == 2 else rotated_bbox.permute(1, 2, 0)
 
     def gaussian_w_distance(self, param_1, param_2):
+        param_1 = self.get_rotated_bounding_box(param_1)
         mu_1, w_1, h_1, theta_1 = torch.split(param_1, (2, 1, 1, 1), dim=-1)
         w_1 = w_1.squeeze(-1)
         h_1 = h_1.squeeze(-1)
-        theta_1 = torch.acos(torch.tensor(-1., device=param_1.device)) * theta_1.squeeze(-1)
+        theta_1 = theta_1.squeeze(-1)
         trace_1 = (w_1 ** 2 + h_1 ** 2) / 4
+        param_2 = self.get_rotated_bounding_box(param_2)
         mu_2, w_2, h_2, theta_2 = torch.split(param_2, (2, 1, 1, 1), dim=-1)
         w_2 = w_2.squeeze(-1)
         h_2 = h_2.squeeze(-1)
-        theta_2 = torch.acos(torch.tensor(-1., device=param_2.device)) * theta_2.squeeze(-1)
+        theta_2 = theta_2.squeeze(-1)
         trace_2 = (w_2 ** 2 + h_2 ** 2) / 4
         sigma_1_sqrt = self.get_sigma_sqrt(w_1, h_1, theta_1)
         sigma_2 = self.get_sigma(w_2, h_2, theta_2)
         trace_12 = torch.matmul(torch.matmul(sigma_1_sqrt, sigma_2), sigma_1_sqrt)
         trace_12 = torch.sqrt(trace_12[..., 0, 0] + trace_12[..., 1, 1] + 2 * torch.sqrt(
             trace_12[..., 0, 0] * trace_12[..., 1, 1] - trace_12[..., 0, 1] * trace_12[..., 1, 0]))
-        return torch.sum((mu_1 - mu_2) ** 2, dim=-1) + trace_1 + trace_2 - 2 * trace_12
+        distance = torch.sum((mu_1 - mu_2) ** 2, dim=-1) + trace_1 + trace_2 - 2 * trace_12
+        distance = torch.nan_to_num(distance, 1e4)
+        return distance
 
     def optimize_parameters(self):
         self.forward()
@@ -225,7 +234,11 @@ class PainterModel(BaseModel):
                 cost_matrix_w = self.gaussian_w_distance(pred_param_broad, valid_gt_param_broad)
                 decision = self.pred_decision[i]
                 cost_matrix_decision = (1 - decision).unsqueeze(-1).repeat(1, valid_gt_param.shape[0])
-                r, c = linear_sum_assignment((cost_matrix_l1 + cost_matrix_w + cost_matrix_decision).cpu())
+                try:
+                    r, c = linear_sum_assignment((cost_matrix_l1 + cost_matrix_w + cost_matrix_decision).cpu())
+                except ValueError:
+                    r = np.arange(valid_gt_param.shape[0])
+                    c = np.arange(valid_gt_param.shape[0])
                 r_idx.append(torch.tensor(r + self.pred_param.shape[1] * i, device=self.device))
                 c_idx.append(torch.tensor(c + cur_valid_gt_size, device=self.device))
                 cur_valid_gt_size += valid_gt_param.shape[0]

@@ -152,3 +152,5 @@ gan_stroke_generator/brushes
 gan_stroke_generator/lib
 gan_stroke_generator/cairo.py
 gan_stroke_generator/data
+train/checkpoints/
+logdir/

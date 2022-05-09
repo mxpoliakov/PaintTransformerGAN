@@ -7,8 +7,6 @@ import torch.optim as optim
 from torch import autograd
 from torch.utils.tensorboard import SummaryWriter
 
-from gan_stroke_generator.mypaint_images_data_loader import MyPaintImagesDataLoader
-
 # custom weights initialization called on netG and netD
 def weights_init(m):
     classname = m.__class__.__name__
@@ -217,7 +215,9 @@ def train_gan_mypaint_strokes(
     :param save_dir: save directory for checkpoints
     :param save_name: save name used for extra identification
     """
-    # Initialize data loader
+    # Initialize data loader. Local import to avoid issues with MyPaint lib 
+    from gan_stroke_generator.mypaint_images_data_loader import MyPaintImagesDataLoader
+
     loader = MyPaintImagesDataLoader(64, 64)
     action_size = loader.num_action
 

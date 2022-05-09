@@ -35,5 +35,5 @@ class TrainOptions(BaseOptions):
         parser.add_argument('--lr_decay_iters', type=int, default=50,
                             help='multiply by a gamma every lr_decay_iters iterations')
 
-        self.isTrain = True
+        self.is_train = True
         return parser

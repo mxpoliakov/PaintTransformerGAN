@@ -7,7 +7,7 @@ from models import create_model
 from torch.utils.tensorboard import SummaryWriter
 
 # losses: same format as |losses| of plot_current_losses
-def print_current_losses(log_name, epoch, iters, losses, t_comp, t_data):
+def print_current_losses(log_name, epoch, iters, losses, t_comp):
     """print current losses on console; also save the losses to the disk
 
     Parameters:
@@ -15,13 +15,11 @@ def print_current_losses(log_name, epoch, iters, losses, t_comp, t_data):
         iters (int) -- current training iteration during this epoch (reset to 0 at the end of every epoch)
         losses (OrderedDict) -- training losses stored in the format of (name, float) pairs
         t_comp (float) -- computational time per data point (normalized by batch_size)
-        t_data (float) -- data loading time per data point (normalized by batch_size)
     """
-    message = "(epoch: %d, iters: %d, time: %.3f, data: %.3f) " % (
+    message = "(epoch: %d, iters: %d, time: %.3f) " % (
         epoch,
         iters,
         t_comp,
-        t_data,
     )
     for k, v in losses.items():
         message += "%s: %.3f " % (k, v)
@@ -49,16 +47,12 @@ if __name__ == "__main__":
 
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
         epoch_start_time = time.time()  # timer for entire epoch
-        iter_data_time = time.time()  # timer for data loading per iteration
         epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
-        for i, data in enumerate(dataset):  # inner loop within one epoch
+        for i in range(dataset_size):  # inner loop within one epoch
             iter_start_time = time.time()  # timer for computation per iteration
-            if total_iters % opt.print_freq == 0:
-                t_data = iter_start_time - iter_data_time
-
             total_iters += opt.batch_size
             epoch_iter += opt.batch_size
-            model.set_input(data)  # unpack data from dataset and apply preprocessing
+            model.set_input()  # unpack data from dataset and apply preprocessing
             model.optimize_parameters()  # calculate loss functions, get gradients, update network weights
 
             if (
@@ -75,7 +69,7 @@ if __name__ == "__main__":
                 losses = model.get_current_losses()
                 t_comp = (time.time() - iter_start_time) / opt.batch_size
                 print_current_losses(
-                    log_name, epoch, epoch_iter, losses, t_comp, t_data
+                    log_name, epoch, epoch_iter, losses, t_comp
                 )
                 for label, loss in losses.items():
                     writer.add_scalar(label, loss, total_iters)

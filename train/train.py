@@ -48,7 +48,7 @@ if __name__ == "__main__":
     for epoch in range(opt.epoch_count, opt.n_epochs + opt.n_epochs_decay + 1):
         epoch_start_time = time.time()  # timer for entire epoch
         epoch_iter = 0  # the number of training iterations in current epoch, reset to 0 every epoch
-        for i in range(dataset_size):  # inner loop within one epoch
+        for _, _ in enumerate(dataset):  # inner loop within one epoch
             iter_start_time = time.time()  # timer for computation per iteration
             total_iters += opt.batch_size
             epoch_iter += opt.batch_size

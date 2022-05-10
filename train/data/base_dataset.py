@@ -47,6 +47,9 @@ class BaseDataset(data.Dataset, ABC):
         """Return the total number of images in the dataset."""
         return 0
 
+    def __iter__(self):
+        return {}
+
 
 def get_params(opt, size):
     w, h = size

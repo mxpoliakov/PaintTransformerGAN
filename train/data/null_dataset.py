@@ -8,3 +8,7 @@ class NullDataset(BaseDataset):
     def __len__(self):
         """Return the total number of images in the dataset."""
         return self.opt.max_dataset_size
+
+    def __getitem__(self, index):
+        return {}
+

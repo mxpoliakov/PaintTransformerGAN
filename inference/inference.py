@@ -6,16 +6,17 @@ import network
 import morphology
 import os
 import math
+import torchvision.transforms as transforms
+from gan_stroke_generator.mypaint_gan_train_predict import GANMyPaintStrokes
 
 idx = 0
-
 
 def save_img(img, output_path):
     result = Image.fromarray((img.data.cpu().numpy().transpose((1, 2, 0)) * 255).astype(np.uint8))
     result.save(output_path)
 
 
-def param2stroke(param, H, W, meta_brushes):
+def param2stroke(param, H, W, gan_strokes):
     """
     Input a set of stroke parameters and output its corresponding foregrounds and alpha maps.
     Args:
@@ -23,52 +24,23 @@ def param2stroke(param, H, W, meta_brushes):
         x_center, y_center, width, height, theta, R, G, and B.
         H: output height.
         W: output width.
-        meta_brushes: a tensor with shape 2 x 3 x meta_brush_height x meta_brush_width.
-         The first slice on the batch dimension denotes vertical brush and the second one denotes horizontal brush.
+        gan_strokes: a GANMyPaintStrokes model to generate strokes.
 
     Returns:
         foregrounds: a tensor with shape n_strokes x 3 x H x W, containing color information.
         alphas: a tensor with shape n_strokes x 3 x H x W,
          containing binary information of whether a pixel is belonging to the stroke (alpha mat), for painting process.
     """
-    # Firstly, resize the meta brushes to the required shape,
-    # in order to decrease GPU memory especially when the required shape is small.
-    meta_brushes_resize = F.interpolate(meta_brushes, (H, W))
-    b = param.shape[0]
-    # Extract shape parameters and color parameters.
-    param_list = torch.split(param, 1, dim=1)
-    x0, y0, w, h, theta = [item.squeeze(-1) for item in param_list[:5]]
-    R, G, B = param_list[5:]
-    # Pre-compute sin theta and cos theta
-    sin_theta = torch.sin(torch.acos(torch.tensor(-1., device=param.device)) * theta)
-    cos_theta = torch.cos(torch.acos(torch.tensor(-1., device=param.device)) * theta)
-    # index means each stroke should use which meta stroke? Vertical meta stroke or horizontal meta stroke.
-    # When h > w, vertical stroke should be used. When h <= w, horizontal stroke should be used.
-    index = torch.full((b,), -1, device=param.device, dtype=torch.long)
-    index[h > w] = 0
-    index[h <= w] = 1
-    brush = meta_brushes_resize[index.long()]
-
-    # Calculate warp matrix according to the rules defined by pytorch, in order for warping.
-    warp_00 = cos_theta / w
-    warp_01 = sin_theta * H / (W * w)
-    warp_02 = (1 - 2 * x0) * cos_theta / w + (1 - 2 * y0) * sin_theta * H / (W * w)
-    warp_10 = -sin_theta * W / (H * h)
-    warp_11 = cos_theta / h
-    warp_12 = (1 - 2 * y0) * cos_theta / h - (1 - 2 * x0) * sin_theta * W / (H * h)
-    warp_0 = torch.stack([warp_00, warp_01, warp_02], dim=1)
-    warp_1 = torch.stack([warp_10, warp_11, warp_12], dim=1)
-    warp = torch.stack([warp_0, warp_1], dim=1)
-    # Conduct warping.
-    grid = F.affine_grid(warp, [b, 3, H, W], align_corners=False)
-    brush = F.grid_sample(brush, grid, align_corners=False)
-    # alphas is the binary information suggesting whether a pixel is belonging to the stroke.
-    alphas = (brush > 0).float()
-    brush = brush.repeat(1, 3, 1, 1)
-    alphas = alphas.repeat(1, 3, 1, 1)
-    # Give color to foreground strokes.
-    color_map = torch.cat([R, G, B], dim=1)
-    color_map = color_map.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, H, W)
+    param_list = torch.split(param, [9, 1, 1, 1], dim=1)
+    actions, R, G, B, = param_list
+    brush = gan_strokes.forward(actions)
+    brush = transforms.Resize((H, W))(brush)
+    alphas = torch.cat([brush, brush, brush], dim=1)
+    # Clear noise from alpha
+    quantiles = torch.quantile(alphas.reshape(alphas.shape[0], -1), 0.95, dim=1, keepdim=True)
+    alphas = (alphas > quantiles[:, None, None]).float()
+    color_map = torch.stack([R, G, B], dim=1)
+    color_map = color_map.unsqueeze(-1).repeat(1, 1, H, W)
     foreground = brush * color_map
     # Dilation and erosion are used for foregrounds and alphas respectively to prevent artifacts on stroke borders.
     foreground = morphology.dilation(foreground)
@@ -77,9 +49,9 @@ def param2stroke(param, H, W, meta_brushes):
 
 
 def param2img_serial(
-        param, decision, meta_brushes, cur_canvas, frame_dir, has_border=False, original_h=None, original_w=None):
+        param, decision, gan_strokes, cur_canvas, frame_dir, has_border=False, original_h=None, original_w=None):
     """
-    Input stroke parameters and decisions for each patch, meta brushes, current canvas, frame directory,
+    Input stroke parameters and decisions for each patch, current canvas, frame directory,
     and whether there is a border (if intermediate painting results are required).
     Output the painting results of adding the corresponding strokes on the current canvas.
     Args:
@@ -87,8 +59,7 @@ def param2img_serial(
          x n_stroke_per_patch x n_param_per_stroke
         decision: a 01 tensor with shape batch size x patch along height dimension x patch along width dimension
          x n_stroke_per_patch
-        meta_brushes: a tensor with shape 2 x 3 x meta_brush_height x meta_brush_width.
-        The first slice on the batch dimension denotes vertical brush and the second one denotes horizontal brush.
+        gan_strokes: a GANMyPaintStrokes model to generate strokes.
         cur_canvas: a tensor with shape batch size x 3 x H x W,
          where H and W denote height and width of padded results of original images.
         frame_dir: directory to save intermediate painting results. None means intermediate results are not required.
@@ -137,7 +108,7 @@ def param2img_serial(
         selected_alphas = torch.zeros(selected_param.shape[0], 3, patch_size_y, patch_size_x, device=this_canvas.device)
         if selected_param[selected_decision, :].shape[0] > 0:
             selected_foregrounds[selected_decision, :, :, :], selected_alphas[selected_decision, :, :, :] = \
-                param2stroke(selected_param[selected_decision, :], patch_size_y, patch_size_x, meta_brushes)
+                param2stroke(selected_param[selected_decision, :], patch_size_y, patch_size_x, gan_strokes)
         selected_foregrounds = selected_foregrounds.view(
             b, selected_h, selected_w, 3, patch_size_y, patch_size_x).contiguous()
         selected_alphas = selected_alphas.view(b, selected_h, selected_w, 3, patch_size_y, patch_size_x).contiguous()
@@ -220,9 +191,9 @@ def param2img_serial(
     return cur_canvas
 
 
-def param2img_parallel(param, decision, meta_brushes, cur_canvas):
+def param2img_parallel(param, decision, gan_strokes, cur_canvas):
     """
-        Input stroke parameters and decisions for each patch, meta brushes, current canvas, frame directory,
+        Input stroke parameters and decisions for each patch, current canvas, frame directory,
         and whether there is a border (if intermediate painting results are required).
         Output the painting results of adding the corresponding strokes on the current canvas.
         Args:
@@ -230,7 +201,7 @@ def param2img_parallel(param, decision, meta_brushes, cur_canvas):
              x n_stroke_per_patch x n_param_per_stroke
             decision: a 01 tensor with shape batch size x patch along height dimension x patch along width dimension
              x n_stroke_per_patch
-            meta_brushes: a tensor with shape 2 x 3 x meta_brush_height x meta_brush_width.
+            gan_strokes: a GANMyPaintStrokes model to generate strokes.
             The first slice on the batch dimension denotes vertical brush and the second one denotes horizontal brush.
             cur_canvas: a tensor with shape batch size x 3 x H x W,
              where H and W denote height and width of padded results of original images.
@@ -241,7 +212,7 @@ def param2img_parallel(param, decision, meta_brushes, cur_canvas):
     # param: b, h, w, stroke_per_patch, param_per_stroke
     # decision: b, h, w, stroke_per_patch
     b, h, w, s, p = param.shape
-    param = param.view(-1, 8).contiguous()
+    param = param.view(-1, 12).contiguous()
     decision = decision.view(-1).contiguous().bool()
     H, W = cur_canvas.shape[-2:]
     is_odd_y = h % 2 == 1
@@ -260,7 +231,7 @@ def param2img_parallel(param, decision, meta_brushes, cur_canvas):
                                     patch_size_y // 4, patch_size_y // 4, 0, 0, 0, 0])
     foregrounds = torch.zeros(param.shape[0], 3, patch_size_y, patch_size_x, device=cur_canvas.device)
     alphas = torch.zeros(param.shape[0], 3, patch_size_y, patch_size_x, device=cur_canvas.device)
-    valid_foregrounds, valid_alphas = param2stroke(param[decision, :], patch_size_y, patch_size_x, meta_brushes)
+    valid_foregrounds, valid_alphas = param2stroke(param[decision, :], patch_size_y, patch_size_x, gan_strokes)
     foregrounds[decision, :, :, :] = valid_foregrounds
     alphas[decision, :, :, :] = valid_alphas
     # foreground, alpha: b * h * w * stroke_per_patch, 3, patch_size_y, patch_size_x
@@ -373,7 +344,7 @@ def crop(img, h, w):
     return img
 
 
-def main(input_path, model_path, output_dir, need_animation=False, resize_h=None, resize_w=None, serial=False):
+def main(input_path, model_path, output_dir, gan_strokes_checkpoint, need_animation=False, resize_h=None, resize_w=None, serial=False):
     if not os.path.exists(output_dir):
         os.mkdir(output_dir)
     input_name = os.path.basename(input_path)
@@ -389,16 +360,18 @@ def main(input_path, model_path, output_dir, need_animation=False, resize_h=None
     patch_size = 32
     stroke_num = 8
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net_g = network.Painter(5, stroke_num, 256, 8, 3, 3).to(device)
-    net_g.load_state_dict(torch.load(model_path))
+    net_g = network.Painter(9, stroke_num, 256, 8, 3, 3).to(device)
+    net_g.load_state_dict(torch.load(model_path, map_location=device))
     net_g.eval()
+    gan_strokes = GANMyPaintStrokes(action_size=9).to(device)
+    gan_strokes.load_from_train_checkpoint(gan_strokes_checkpoint)
+    gan_strokes.eval()
+
     for param in net_g.parameters():
         param.requires_grad = False
-
-    brush_large_vertical = read_img('brush/brush_large_vertical.png', 'L').to(device)
-    brush_large_horizontal = read_img('brush/brush_large_horizontal.png', 'L').to(device)
-    meta_brushes = torch.cat(
-        [brush_large_vertical, brush_large_horizontal], dim=0)
+        
+    for param in gan_strokes.parameters():
+        param.requires_grad = False
 
     with torch.no_grad():
         original_img = read_img(input_path, 'RGB', resize_h, resize_w).to(device)
@@ -432,17 +405,15 @@ def main(input_path, model_path, output_dir, need_animation=False, resize_h=None
             stroke_param = torch.cat([shape_param, color], dim=-1)
             # stroke_param: b * h * w, stroke_per_patch, param_per_stroke
             # stroke_decision: b * h * w, stroke_per_patch, 1
-            param = stroke_param.view(1, patch_num, patch_num, stroke_num, 8).contiguous()
+            param = stroke_param.view(1, patch_num, patch_num, stroke_num, 12).contiguous()
             decision = stroke_decision.view(1, patch_num, patch_num, stroke_num).contiguous().bool()
-            # param: b, h, w, stroke_per_patch, 8
+            # param: b, h, w, stroke_per_patch, 12
             # decision: b, h, w, stroke_per_patch
-            param[..., :2] = param[..., :2] / 2 + 0.25
-            param[..., 2:4] = param[..., 2:4] / 2
             if serial:
-                final_result = param2img_serial(param, decision, meta_brushes, final_result,
+                final_result = param2img_serial(param, decision, gan_strokes, final_result,
                                                 frame_dir, False, original_h, original_w)
             else:
-                final_result = param2img_parallel(param, decision, meta_brushes, final_result)
+                final_result = param2img_parallel(param, decision, gan_strokes, final_result)
 
         border_size = original_img_pad_size // (2 * patch_num)
         img = F.interpolate(original_img_pad, (patch_size * (2 ** layer), patch_size * (2 ** layer)))
@@ -469,17 +440,15 @@ def main(input_path, model_path, output_dir, need_animation=False, resize_h=None
         stroke_param = torch.cat([shape_param, color], dim=-1)
         # stroke_param: b * h * w, stroke_per_patch, param_per_stroke
         # stroke_decision: b * h * w, stroke_per_patch, 1
-        param = stroke_param.view(1, h, w, stroke_num, 8).contiguous()
+        param = stroke_param.view(1, h, w, stroke_num, 12).contiguous()
         decision = stroke_decision.view(1, h, w, stroke_num).contiguous().bool()
-        # param: b, h, w, stroke_per_patch, 8
+        # param: b, h, w, stroke_per_patch, 12
         # decision: b, h, w, stroke_per_patch
-        param[..., :2] = param[..., :2] / 2 + 0.25
-        param[..., 2:4] = param[..., 2:4] / 2
         if serial:
-            final_result = param2img_serial(param, decision, meta_brushes, final_result,
+            final_result = param2img_serial(param, decision, gan_strokes, final_result,
                                             frame_dir, True, original_h, original_w)
         else:
-            final_result = param2img_parallel(param, decision, meta_brushes, final_result)
+            final_result = param2img_parallel(param, decision, gan_strokes, final_result)
         final_result = final_result[:, :, border_size:-border_size, border_size:-border_size]
 
         final_result = crop(final_result, original_h, original_w)
@@ -487,9 +456,10 @@ def main(input_path, model_path, output_dir, need_animation=False, resize_h=None
 
 
 if __name__ == '__main__':
-    main(input_path='input/chicago.jpg',
+    main(input_path='./input/sunflower.png',
          model_path='model.pth',
          output_dir='output/',
+         gan_strokes_checkpoint='../gan_stroke_generator/gan_train_checkpoints/gan_mypaint_strokes_latest.tar',
          need_animation=False,  # whether need intermediate results for animation.
          resize_h=None,         # resize original input to this size. None means do not resize.
          resize_w=None,         # resize original input to this size. None means do not resize.

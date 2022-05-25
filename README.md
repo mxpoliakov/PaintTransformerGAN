@@ -67,14 +67,6 @@ ICCV 2021 (Oral)
 
 * You may feel free to try other training options written in train.sh. 
 
-## More Results
-
-Input             |  Animated Output
-:-------------------------:|:-------------------------:
-![](picture/1.jpg)  |  ![](picture/1.gif)
-![](picture/2.jpg)  |  ![](picture/2.gif)
-![](picture/3.jpg)  |  ![](picture/3.gif)
-
 ## Citation
 
 * If you find ideas or codes useful for your research, please cite:

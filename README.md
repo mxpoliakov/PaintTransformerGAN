@@ -22,24 +22,37 @@ ICCV 2021 (Oral)
 
 ## Results
 
-<style>
-table th:first-of-type {
-    width: 33.33%;
-}
-table th:nth-of-type(2) {
-    width: 33.33%;
-}
-table th:nth-of-type(3) {
-    width: 33.33%;
-}
-</style>
-
-| Image | PaintTransformer | PaintTransformerGAN |
-|---|---|---|
-| ![](picture/1.png) | ![](picture/1a.png) | ![](picture/1b.png) |
-| ![](picture/2.png) | ![](picture/2a.png) | ![](picture/2b.png) |
-| ![](picture/3.png) | ![](picture/3a.png) | ![](picture/3b.png) |
-| ![](picture/4.png) | ![](picture/4a.png) | ![](picture/4b.png) |
+<table width="100%">
+<thead>
+  <tr>
+    <th width="33.33%">Image</th>
+    <th width="33.33%">PaintTransformer</th>
+    <th width="33.33%">PaintTransformerGAN</th>
+  </tr>
+</thead>
+<tbody>
+  <tr>
+    <td><img src="picture/1.png"></td>
+    <td><img src="picture/1a.png"></td>
+    <td><img src="picture/1b.png"></td>
+  </tr>
+  <tr>
+    <td><img src="picture/2.png"></td>
+    <td><img src="picture/2a.png"></td>
+    <td><img src="picture/2b.png"></td>
+  </tr>
+  <tr>
+    <td><img src="picture/3.png"></td>
+    <td><img src="picture/3a.png"></td>
+    <td><img src="picture/3b.png"></td>
+  </tr>
+  <tr>
+    <td><img src="picture/4.png"></td>
+    <td><img src="picture/4a.png"></td>
+    <td><img src="picture/4b.png"></td>
+  </tr>
+</tbody>
+</table>
 
 ## Getting Started
 

@@ -20,20 +20,34 @@ ICCV 2021 (Oral)
 * Python 3
 * PyTorch 1.7+ and other dependencies (torchvision and other common python libs)
 
+## Results
+
+<style>
+table th:first-of-type {
+    width: 33.33%;
+}
+table th:nth-of-type(2) {
+    width: 33.33%;
+}
+table th:nth-of-type(3) {
+    width: 33.33%;
+}
+</style>
+
+| Image | PaintTransformer | PaintTransformerGAN |
+|---|---|---|
+| ![](picture/1.png) | ![](picture/1a.png) | ![](picture/1b.png) |
+| ![](picture/2.png) | ![](picture/2a.png) | ![](picture/2b.png) |
+| ![](picture/3.png) | ![](picture/3a.png) | ![](picture/3b.png) |
+| ![](picture/4.png) | ![](picture/4a.png) | ![](picture/4b.png) |
+
 ## Getting Started
 
 * Clone this repository:
 
   ```shell
-  git clone https://github.com/Huage001/PaintTransformer
-  cd PaintTransformer
-  ```
-
-* Download pretrained model from [Google Drive](https://drive.google.com/file/d/1NDD54BLligyr8tzo8QGI5eihZisXK1nq/view?usp=sharing) and move it to inference directory:
-
-  ```shell
-  mv [Download Directory]/model.pth inference/
-  cd inference
+  git clone https://github.com/Huage001/PaintTransformerGAN
+  cd PaintTransformerGAN
   ```
 
 * Inference: 
